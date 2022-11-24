@@ -1,0 +1,22 @@
+importFrom(R6, R6Class)
+
+# Main classes
+export(IBClient)
+export(IBWrap)
+
+# Helpers
+export(IBContract)
+export(IBOrder)
+export(fCondition)
+export(map_enum2int)
+export(map_int2enum)
+
+# Structures
+export(ComboLeg)
+export(Contract)
+export(DeltaNeutralContract)
+export(ExecutionFilter)
+export(Order)
+export(ScannerSubscription)
+export(SoftDollarTier)
+export(WshEventData)
