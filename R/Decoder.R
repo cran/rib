@@ -103,7 +103,7 @@ Decoder <- R6Class("Decoder",
       m <- imsg$pop(5L)
 
       # Convert tickType to string
-      m[2L] <- map_ticktype[m[2L]]
+      m[2L] <- ticktype(m[2L])
 
       attrib <- private$unmask(m[5L], c("canAutoExecute", "pastLimit", "preOpen"))
 
@@ -119,7 +119,7 @@ Decoder <- R6Class("Decoder",
       m <- imsg$pop(3L)
 
       # Convert tickType to string
-      m[2L] <- map_ticktype[m[2L]]
+      m[2L] <- ticktype(m[2L])
 
       private$validate("tickSize",  m, no_names=TRUE)
     },
@@ -129,7 +129,7 @@ Decoder <- R6Class("Decoder",
       m <- imsg$pop(11L)
 
       # Convert tickType to string
-      m[2L] <- map_ticktype[m[2L]]
+      m[2L] <- ticktype(m[2L])
 
       # (impliedVol, optPrice, pvDividend, undPrice) == -1 means NA
       idx <- c(4L, 6L, 7L, 11L)
@@ -147,7 +147,7 @@ Decoder <- R6Class("Decoder",
       m <- imsg$pop(3L)
 
       # Convert tickType to string
-      m[2L] <- map_ticktype[m[2L]]
+      m[2L] <- ticktype(m[2L])
 
       private$validate("tickGeneric", m, no_names=TRUE)
     },
@@ -157,7 +157,7 @@ Decoder <- R6Class("Decoder",
       m <- imsg$pop(3L)
 
       # Convert tickType to string
-      m[2L] <- map_ticktype[m[2L]]
+      m[2L] <- ticktype(m[2L])
 
       private$validate("tickString", m, no_names=TRUE)
     },
@@ -167,7 +167,7 @@ Decoder <- R6Class("Decoder",
       m <- imsg$pop(9L)
 
       # Convert tickType to string
-      m[2L] <- map_ticktype[m[2L]]
+      m[2L] <- ticktype(m[2L])
 
       private$validate("tickEFP", m, no_names=TRUE)
     },
@@ -179,12 +179,7 @@ Decoder <- R6Class("Decoder",
 
     ERR_MSG= function(imsg) {
 
-      m <- if(private$serverVersion >= MIN_SERVER_VER_ADVANCED_ORDER_REJECT)
-             imsg$pop(4L)
-           else
-             c(imsg$pop(3L), "")
-
-      private$validate("error", m, no_names=TRUE)
+      private$validate("error", imsg$pop(4L), no_names=TRUE)
     },
 
     OPEN_ORDER= function(imsg) {
@@ -196,7 +191,7 @@ Decoder <- R6Class("Decoder",
 
       contract[c(1L:8L, 10L:12L)] <- imsg$pop(11L)
 
-      order[c(4L:9L)] <- imsg$pop(6L)  # "action" through "tif"
+      order[c(4L:9L)] <- imsg$pop(6L) # "action" -> "tif"
 
       order[c("ocaGroup",
               "account",
@@ -212,24 +207,27 @@ Decoder <- R6Class("Decoder",
               "discretionaryAmt",
               "goodAfterTime")] <- imsg$pop(7L)
 
-      imsg$pop()  # deprecated sharesAllocation
+      imsg$pop() # Deprecated sharesAllocation
 
       order[c("faGroup",
               "faMethod",
-              "faPercentage",
-              "faProfile",
-              "modelCode",
+              "faPercentage")] <- imsg$pop(3L)
+
+      if(private$serverVersion < MIN_SERVER_VER_FA_PROFILE_DESUPPORT)
+        imsg$pop() # Deprecated faProfile
+
+      order[c("modelCode",
               "goodTillDate",
               "rule80A",
               "percentOffset",
               "settlingFirm",
               "shortSaleSlot",
               "designatedLocation",
-              "exemptCode")] <- imsg$pop(12L)
+              "exemptCode")] <- imsg$pop(8L)
 
       order$auctionStrategy <- map_int2enum("AuctionStrategy", imsg$pop())
 
-      order[44L:48L] <- imsg$pop(5L)     # "startingPrice" through "stockRangeUpper"
+      order[43L:47L] <- imsg$pop(5L) # "startingPrice" -> "stockRangeUpper"
 
       order[c("displaySize",
               "blockOrder",
@@ -238,15 +236,15 @@ Decoder <- R6Class("Decoder",
               "minQty",
               "ocaType")] <- imsg$pop(6L)
 
-      imsg$pop(3L)  # deprecated eTradeOnly, firmQuoteOnly, nbboPriceCap
+      imsg$pop(3L) # Deprecated eTradeOnly, firmQuoteOnly, nbboPriceCap
 
       order[c("parentId",
               "triggerMethod")] <- imsg$pop(2L)
 
-      order[51L:54L] <- imsg$pop(4L)    # "volatility" through "deltaNeutralAuxPrice"
+      order[50L:53L] <- imsg$pop(4L) # "volatility" -> "deltaNeutralAuxPrice"
 
       if(nzchar(order$deltaNeutralOrderType))
-        order[55L:62L] <- imsg$pop(8L)  # "deltaNeutralConId" through "deltaNeutralDesignatedLocation"
+        order[54L:61L] <- imsg$pop(8L) # "deltaNeutralConId" -> "deltaNeutralDesignatedLocation"
 
       order[c("continuousUpdate",
               "referencePriceType",
@@ -291,7 +289,7 @@ Decoder <- R6Class("Decoder",
       order$scalePriceIncrement <- Validator$n(imsg$pop())
 
       if(!is.na(order$scalePriceIncrement) && order$scalePriceIncrement > 0L)
-        order[70L:76L] <- imsg$pop(7L)
+        order[69L:75L] <- imsg$pop(7L) # "scalePriceAdjustValue" -> "scaleRandomPercent"
 
       order$hedgeType <- imsg$pop()
 
@@ -375,14 +373,12 @@ Decoder <- R6Class("Decoder",
               "usePriceMgmtAlgo",
               "duration",
               "postToAts",
-              "autoCancelParent")] <- imsg$pop(8L)
-
-      if(private$serverVersion >= MIN_SERVER_VER_PEGBEST_PEGMID_OFFSETS)
-         order[c("minTradeQty",
-                 "minCompeteSize",
-                 "competeAgainstBestOffset",
-                 "midOffsetAtWhole",
-                 "midOffsetAtHalf")] <- imsg$pop(5L)
+              "autoCancelParent",
+              "minTradeQty",
+              "minCompeteSize",
+              "competeAgainstBestOffset",
+              "midOffsetAtWhole",
+              "midOffsetAtHalf")] <- imsg$pop(13L)
 
       private$validate("openOrder", orderId=    order$orderId,
                                     contract=   contract,
@@ -562,7 +558,7 @@ Decoder <- R6Class("Decoder",
 
       reqId <- imsg$pop()
 
-      imsg$pop(2L)  # ignore startDate, endDate
+      imsg$pop(2L) # Ignore startDate, endDate
 
       # Number of rows
       n <- Validator$i(imsg$pop())
@@ -857,12 +853,11 @@ Decoder <- R6Class("Decoder",
 
                               nsec <- Validator$i(imsg$pop())
 
-                              if(nsec>0L)
+                              if(nsec > 0L)
                                 cd$derivativeSecTypes <- imsg$pop(nsec)
 
-                              if(private$serverVersion >= MIN_SERVER_VER_BOND_ISSUERID)
-                                cd$contract[c("description",
-                                              "issuerId")] <- imsg$pop(2L)
+                              cd$contract[c("description",
+                                            "issuerId")] <- imsg$pop(2L)
                               cd
                             })
 
@@ -1083,7 +1078,7 @@ Decoder <- R6Class("Decoder",
 
       contract[c(1L:8L, 10L:12L)] <- imsg$pop(11L)
 
-      order[c(4L:9L)] <- imsg$pop(6L)  # "action" through "tif"
+      order[c(4L:9L)] <- imsg$pop(6L) # "action" -> "tif"
 
       order[c("ocaGroup",
               "account",
@@ -1099,18 +1094,21 @@ Decoder <- R6Class("Decoder",
               "goodAfterTime",
               "faGroup",
               "faMethod",
-              "faPercentage",
-              "faProfile",
-              "modelCode",
+              "faPercentage")] <- imsg$pop(9L)
+
+      if(private$serverVersion < MIN_SERVER_VER_FA_PROFILE_DESUPPORT)
+        imsg$pop() # Deprecated faProfile
+
+      order[c("modelCode",
               "goodTillDate",
               "rule80A",
               "percentOffset",
               "settlingFirm",
               "shortSaleSlot",
               "designatedLocation",
-              "exemptCode")] <- imsg$pop(18L)
+              "exemptCode")] <- imsg$pop(8L)
 
-      order[44L:48L] <- imsg$pop(5L)     # "startingPrice" through "stockRangeUpper"
+      order[43L:47L] <- imsg$pop(5L) # "startingPrice" -> "stockRangeUpper"
 
       order[c("displaySize",
               "sweepToFill",
@@ -1119,10 +1117,10 @@ Decoder <- R6Class("Decoder",
               "ocaType",
               "triggerMethod")] <- imsg$pop(6L)
 
-      order[51L:54L] <- imsg$pop(4L)   # "volatility" through "deltaNeutralAuxPrice"
+      order[50L:53L] <- imsg$pop(4L) # "volatility" -> "deltaNeutralAuxPrice"
 
       if(nzchar(order$deltaNeutralOrderType))
-        order[c(55L, 60L:62L)] <- imsg$pop(4L)  # "deltaNeutralConId" through "deltaNeutralDesignatedLocation"
+        order[c(54L, 59L:61L)] <- imsg$pop(4L) # "deltaNeutralConId" -> "deltaNeutralDesignatedLocation"
 
 
       order[c("continuousUpdate",
@@ -1167,8 +1165,7 @@ Decoder <- R6Class("Decoder",
       order$scalePriceIncrement <- Validator$n(imsg$pop())
 
       if(!is.na(order$scalePriceIncrement) && order$scalePriceIncrement > 0L)
-        order[70L:76L] <- imsg$pop(7L)
-
+        order[69L:75L] <- imsg$pop(7L) # "scalePriceAdjustValue" -> "scaleRandomPercent"
 
       order$hedgeType <- imsg$pop()
 
@@ -1236,17 +1233,16 @@ Decoder <- R6Class("Decoder",
               "dontUseAutoPriceForHedge",
               "isOmsContainer")] <- imsg$pop(5L)
 
-      order[119L:126L] <- imsg$pop(8L)     # "autoCancelDate" through "parentPermId"
+      order[118L:125L] <- imsg$pop(8L) # "autoCancelDate" -> "parentPermId"
 
       orderState[c("completedTime",
                    "completedStatus")] <- imsg$pop(2L)
 
-      if(private$serverVersion >= MIN_SERVER_VER_PEGBEST_PEGMID_OFFSETS)
-         order[c("minTradeQty",
-                 "minCompeteSize",
-                 "competeAgainstBestOffset",
-                 "midOffsetAtWhole",
-                 "midOffsetAtHalf")] <- imsg$pop(5L)
+      order[c("minTradeQty",
+              "minCompeteSize",
+              "competeAgainstBestOffset",
+              "midOffsetAtWhole",
+              "midOffsetAtHalf")] <- imsg$pop(5L)
 
       private$validate("completedOrder", contract=   contract,
                                          order=      order,

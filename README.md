@@ -1,5 +1,8 @@
 # rib
 
+[![CRAN status](https://www.r-pkg.org/badges/version/rib?color=blue)](https://CRAN.R-project.org/package=rib)
+![CRAN downloads](https://cranlogs.r-pkg.org/badges/grand-total/rib)
+
 **An R implementation of Interactive Brokers API**
 
 Originally inspired by [`IBrokers`](https://CRAN.R-project.org/package=IBrokers),
@@ -8,15 +11,20 @@ implements the [Interactive Brokers](https://www.interactivebrokers.com/) API
 to communicate with TWS or IBGateway.
 
 It aims to be feature complete, however it does not support legacy versions.
-Currently, only API versions `v165+` are supported.
+Currently, only API versions `v176+` are supported.
 
 The package design mirrors the official C++/Java
 [IB API](https://interactivebrokers.github.io/tws-api/),
 which is based on an asynchronous communication model over TCP.
 
 ### Installation
-To install from GitHub,
-assuming [`devtools`](https://CRAN.R-project.org/package=devtools) or at least
+To install from [CRAN](https://CRAN.R-project.org/package=rib):
+```R
+install.packages("rib")
+```
+
+To install the latest snapshot from GitHub, assuming
+[`devtools`](https://CRAN.R-project.org/package=devtools) or at least
 [`remotes`](https://CRAN.R-project.org/package=remotes) is already installed:
 ```R
 remotes::install_github("lbilli/rib")
