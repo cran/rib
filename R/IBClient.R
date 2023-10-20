@@ -11,7 +11,7 @@ IBClient <- R6Class("IBClient",
     serverVersion=   NULL,  # Returned on connection
     serverTimestamp= NULL,  # Returned on connection
 
-    Id=              NULL,  # Client ID
+    id=              NULL,  # Client ID
 
     decoder=         NULL,  # Decoder
 
@@ -51,7 +51,6 @@ IBClient <- R6Class("IBClient",
              else         c(header, raw_msg)
 
       # Write to socket
-      stopifnot(self$isOpen)
       writeBin(res, private$socket)
     },
 
@@ -64,6 +63,10 @@ IBClient <- R6Class("IBClient",
 
       # Read header and decode message length
       len <- readBin(private$socket, integer(), size=HEADER_LEN, endian="big")
+
+      # Invalid socket
+      if(length(len) == 0L)
+        stop("lost connection")
 
       # Header consistency check
       stopifnot(len >  0L,
@@ -112,9 +115,7 @@ IBClient <- R6Class("IBClient",
 
     serTimestamp= function() private$serverTimestamp,
 
-    clientId=     function() private$Id,
-
-    isOpen=       function() !is.null(private$socket) && isOpen(private$socket)
+    clientId=     function() private$id
   ),
 
   public= list(
@@ -136,7 +137,7 @@ IBClient <- R6Class("IBClient",
       # Server response
       res <- private$readOneMsg()
 
-      stopifnot(length(res)==2L)
+      stopifnot(length(res) == 2L)
 
       message("server version: ", res[1L], " timestamp: ", res[2L])
       private$serverVersion   <- as.integer(res[1L])
@@ -153,7 +154,7 @@ IBClient <- R6Class("IBClient",
       # startAPI
       self$startApi(clientId, optionalCapabilities)
 
-      private$Id <- clientId
+      private$id <- clientId
 
       # TODO
       # Verify that connection was successful
@@ -171,7 +172,7 @@ IBClient <- R6Class("IBClient",
         private$socket          <-
         private$serverVersion   <-
         private$serverTimestamp <-
-        private$Id              <-
+        private$id              <-
         private$decoder         <- NULL
       }
     },
@@ -185,11 +186,9 @@ IBClient <- R6Class("IBClient",
     #
     checkMsg= function(wrap, timeout=0.2) {
 
-      stopifnot(self$isOpen)
-
       count <- 0L
 
-      while(socketSelect(list(private$socket), write=FALSE, timeout=timeout)){
+      while(socketSelect(list(private$socket), write=FALSE, timeout=timeout)) {
 
         count <- count + 1L
 
