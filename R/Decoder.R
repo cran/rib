@@ -6,12 +6,7 @@ Decoder <- R6Class("Decoder",
 
   public= list(
 
-    initialize= function(serverVersion) {
-
-      private$serverVersion <- serverVersion
-    },
-
-    decode= function(msg) {
+    decode= function(msg, ver) {
 
       stopifnot(is.character(msg))
 
@@ -26,21 +21,20 @@ Decoder <- R6Class("Decoder",
       if(imsgId  < 75L && ! imsgId %in% c(3L, 5L, 10L, 11L, 17L, 18L, 21L))
         imsg$pop()
 
-      # Convert ID -> Name
-      msgName <- map_inbound[msgId]
+      # Find handler
+      handler <- private[[msgId]]
 
-      # Unknown msgId
-      res <- if(is.na(msgName)) {
+      res <- if(is.null(handler)) {
                warning("unknown message id: ", msgId)
                NULL
              }
              else
-               # Call the appropriate handler
-               private[[msgName]](imsg)
+              # Call the appropriate handler
+              handler(imsg, ver)
 
-      # Check that all the message has been processed
+      # Check that the full message has been processed
       if(imsg$left() > 0L)
-        warning("message: ", msgName, " not completely processed. Ignored: ",
+        warning("message: ", msgId, " not completely processed. Ignored: ",
                 paste0(dQuote(imsg$pop(imsg$left())), collapse=" "))
 
       res
@@ -49,8 +43,6 @@ Decoder <- R6Class("Decoder",
   ),
 
   private= list(
-
-    serverVersion= NULL,  # Server Version
 
     #
     # Validate/convert args
@@ -73,14 +65,31 @@ Decoder <- R6Class("Decoder",
     #
     # Make a matrix by row
     #
-    to_matrix= function(imsg, n, struct) {
+    to_matrix= function(imsg, struct, names) {
 
-      names <- get("names", environment(Validator[[struct]]))
+      n <- Validator$i(imsg$pop())
+
+      if(!missing(struct))
+        names <- get("names", environment(Validator[[struct]]))
 
       matrix(imsg$pop(n * length(names)),
              ncol=     length(names),
              byrow=    TRUE,
              dimnames= list(character(), names))
+    },
+
+    #
+    # Make a list of structs
+    #
+    to_list= function(imsg, struct) {
+
+      n <- Validator$i(imsg$pop())
+
+      names <- get("names", environment(Validator[[struct]]))
+
+      m <- length(names)
+
+      lapply(seq_len(n), function(i) as.list(structure(imsg$pop(m), names=names)) )
     },
 
     #
@@ -98,7 +107,8 @@ Decoder <- R6Class("Decoder",
     #
     # ##############################################################
 
-    TICK_PRICE= function(imsg) {
+    # TICK_PRICE
+    "1"= function(imsg, ver) {
 
       m <- imsg$pop(5L)
 
@@ -114,7 +124,8 @@ Decoder <- R6Class("Decoder",
                                     attrib=   attrib)
     },
 
-    TICK_SIZE= function(imsg) {
+    # TICK_SIZE
+    "2"= function(imsg, ver) {
 
       m <- imsg$pop(3L)
 
@@ -124,7 +135,8 @@ Decoder <- R6Class("Decoder",
       private$validate("tickSize",  m, no_names=TRUE)
     },
 
-    TICK_OPTION_COMPUTATION= function(imsg) {
+    # TICK_OPTION_COMPUTATION
+    "21"= function(imsg, ver) {
 
       m <- imsg$pop(11L)
 
@@ -142,7 +154,8 @@ Decoder <- R6Class("Decoder",
       private$validate("tickOptionComputation", m, no_names=TRUE)
     },
 
-    TICK_GENERIC= function(imsg) {
+    # TICK_GENERIC
+    "45"= function(imsg, ver) {
 
       m <- imsg$pop(3L)
 
@@ -152,7 +165,8 @@ Decoder <- R6Class("Decoder",
       private$validate("tickGeneric", m, no_names=TRUE)
     },
 
-    TICK_STRING= function(imsg) {
+    # TICK_STRING
+    "46"= function(imsg, ver) {
 
       m <- imsg$pop(3L)
 
@@ -162,7 +176,8 @@ Decoder <- R6Class("Decoder",
       private$validate("tickString", m, no_names=TRUE)
     },
 
-    TICK_EFP= function(imsg) {
+    # TICK_EFP
+    "47"= function(imsg, ver) {
 
       m <- imsg$pop(9L)
 
@@ -172,17 +187,20 @@ Decoder <- R6Class("Decoder",
       private$validate("tickEFP", m, no_names=TRUE)
     },
 
-    ORDER_STATUS= function(imsg) {
+    # ORDER_STATUS
+    "3"= function(imsg, ver) {
 
       private$validate("orderStatus", imsg$pop(11L), no_names=TRUE)
     },
 
-    ERR_MSG= function(imsg) {
+    # ERR_MSG
+    "4"= function(imsg, ver) {
 
       private$validate("error", imsg$pop(4L), no_names=TRUE)
     },
 
-    OPEN_ORDER= function(imsg) {
+    # OPEN_ORDER
+    "5"= function(imsg, ver) {
 
       order    <- Order
       contract <- Contract
@@ -213,7 +231,7 @@ Decoder <- R6Class("Decoder",
               "faMethod",
               "faPercentage")] <- imsg$pop(3L)
 
-      if(private$serverVersion < MIN_SERVER_VER_FA_PROFILE_DESUPPORT)
+      if(ver < MIN_SERVER_VER_FA_PROFILE_DESUPPORT)
         imsg$pop() # Deprecated faProfile
 
       order[c("modelCode",
@@ -256,20 +274,7 @@ Decoder <- R6Class("Decoder",
       contract$comboLegsDescrip <- imsg$pop()
 
       # ComboLegs
-      comboLegsCount <- Validator$i(imsg$pop())
-
-      if(comboLegsCount > 0L) {
-
-        contract$comboLegs <- lapply(seq_len(comboLegsCount),
-                                     function(i) {
-
-                                        combo <- ComboLeg
-
-                                        combo[1L:8L] <- imsg$pop(8L)
-
-                                        combo
-                                      })
-      }
+      contract$comboLegs <- private$to_list(imsg, "ComboLeg")
 
       # OrderComboLeg
       orderComboLegsCount <- Validator$i(imsg$pop())
@@ -341,15 +346,16 @@ Decoder <- R6Class("Decoder",
 
       if(conditionsSize > 0L) {
 
-        for(i in seq_len(conditionsSize)) {
+        order$conditions <- lapply(seq_len(conditionsSize),
+                                   function(i) {
 
-          condition <- fCondition(map_int2enum("Condition",
-                                                Validator$i(imsg$pop())))
+                                     cond <- fCondition(map_int2enum("Condition",
+                                                                     Validator$i(imsg$pop())))
 
-          condition[-1L] <- imsg$pop(length(condition) - 1L)
+                                     cond[-1L] <- imsg$pop(length(cond) - 1L)
 
-          order$conditions[[i]] <- condition
-        }
+                                     cond
+                                   })
 
         order[c("conditionsIgnoreRth",
                 "conditionsCancelOrder")] <- imsg$pop(2L)
@@ -380,11 +386,21 @@ Decoder <- R6Class("Decoder",
               "midOffsetAtWhole",
               "midOffsetAtHalf")] <- imsg$pop(13L)
 
-      if(private$serverVersion >= MIN_SERVER_VER_CUSTOMER_ACCOUNT)
+      if(ver >= MIN_SERVER_VER_CUSTOMER_ACCOUNT)
         order$customerAccount <- imsg$pop()
 
-      if(private$serverVersion >= MIN_SERVER_VER_PROFESSIONAL_CUSTOMER)
+      if(ver >= MIN_SERVER_VER_PROFESSIONAL_CUSTOMER)
         order$professionalCustomer <- imsg$pop()
+
+      if(ver >= MIN_SERVER_VER_BOND_ACCRUED_INTEREST)
+        order$bondAccruedInterest <- imsg$pop()
+
+      if(ver >= MIN_SERVER_VER_INCLUDE_OVERNIGHT)
+        order$includeOvernight <- imsg$pop()
+
+      if(ver >= MIN_SERVER_VER_CME_TAGGING_FIELDS_IN_OPEN_ORDER)
+        order[c("extOperator",
+                "manualOrderIndicator")] <- imsg$pop(2L)
 
       private$validate("openOrder", orderId=    order$orderId,
                                     contract=   contract,
@@ -392,12 +408,14 @@ Decoder <- R6Class("Decoder",
                                     orderstate= orderState)
     },
 
-    ACCT_VALUE= function(imsg) {
+    # ACCT_VALUE
+    "6"= function(imsg, ver) {
 
       private$validate("updateAccountValue", imsg$pop(4L), no_names=TRUE)
     },
 
-    PORTFOLIO_VALUE= function(imsg) {
+    # PORTFOLIO_VALUE
+    "7"= function(imsg, ver) {
 
       contract <- Contract
 
@@ -420,17 +438,20 @@ Decoder <- R6Class("Decoder",
                                           accountName=   accountName)
     },
 
-    ACCT_UPDATE_TIME= function(imsg) {
+    # ACCT_UPDATE_TIME
+    "8"= function(imsg, ver) {
 
       private$validate("updateAccountTime", timeStamp=imsg$pop())
     },
 
-    NEXT_VALID_ID= function(imsg) {
+    # NEXT_VALID_ID
+    "9"= function(imsg, ver) {
 
       private$validate("nextValidId", orderId=imsg$pop())
     },
 
-    CONTRACT_DATA= function(imsg) {
+    # CONTRACT_DATA
+    "10"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
@@ -438,7 +459,7 @@ Decoder <- R6Class("Decoder",
 
       cd$contract[2L:4L] <- imsg$pop(3L)
 
-      if(private$serverVersion >= MIN_SERVER_VER_LAST_TRADE_DATE)
+      if(ver >= MIN_SERVER_VER_LAST_TRADE_DATE)
         cd$contract$lastTradeDate <- imsg$pop()
 
       cd$contract[c(5L, 6L, 8L, 10L, 11L)] <- imsg$pop(5L)
@@ -467,7 +488,7 @@ Decoder <- R6Class("Decoder",
            "sizeIncrement",
            "suggestedSizeIncrement")] <- imsg$pop(9L)
 
-      if(private$serverVersion >= MIN_SERVER_VER_FUND_DATA_FIELDS &&
+      if(ver >= MIN_SERVER_VER_FUND_DATA_FIELDS &&
          cd$contract$secType == "FUND") {
 
         cd[44L:58L] <- imsg$pop(15L)
@@ -476,10 +497,14 @@ Decoder <- R6Class("Decoder",
         cd$fundAssetType <- fundtype(imsg$pop())
       }
 
+      if(ver >= MIN_SERVER_VER_INELIGIBILITY_REASONS)
+        cd$ineligibilityReasonList <- private$to_list(imsg, "IneligibilityReason")
+
       private$validate("contractDetails", reqId=reqId, contractDetails=cd)
     },
 
-    BOND_CONTRACT_DATA= function(imsg) {
+    # BOND_CONTRACT_DATA
+    "18"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
@@ -514,9 +539,12 @@ Decoder <- R6Class("Decoder",
            "nextOptionType",
            "nextOptionPartial",
            "notes",
-           "longName",
-           "evRule",
-           "evMultiplier")] <- imsg$pop(10L)
+           "longName")] <- imsg$pop(8L)
+
+      if(ver >= MIN_SERVER_VER_BOND_TRADING_HOURS)
+        cd[13L:15L] <- imsg$pop(3L) # "timeZoneId" -> "liquidHours"
+
+      cd[16L:17L] <- imsg$pop(2L) # "evRule" -> "evMultiplier"
 
       n <- Validator$i(imsg$pop())
 
@@ -532,7 +560,8 @@ Decoder <- R6Class("Decoder",
       private$validate("bondContractDetails", reqId=reqId, contractDetails=cd)
     },
 
-    EXECUTION_DATA= function(imsg) {
+    # EXECUTION_DATA
+    "11"= function(imsg, ver) {
 
       contract  <- Contract
       execution <- Execution
@@ -545,56 +574,58 @@ Decoder <- R6Class("Decoder",
 
       execution[c(1L:9L, 11L:18L)] <- imsg$pop(17L)
 
-      if(private$serverVersion >= MIN_SERVER_VER_PENDING_PRICE_REVISION)
+      if(ver >= MIN_SERVER_VER_PENDING_PRICE_REVISION)
         execution$pendingPriceRevision <- imsg$pop()
 
       private$validate("execDetails", reqId=reqId, contract=contract, execution=execution)
     },
 
-    MARKET_DEPTH= function(imsg) {
+    # MARKET_DEPTH
+    "12"= function(imsg, ver) {
 
       private$validate("updateMktDepth", imsg$pop(6L), no_names=TRUE)
     },
 
-    MARKET_DEPTH_L2= function(imsg) {
+    # MARKET_DEPTH_L2
+    "13"= function(imsg, ver) {
 
       private$validate("updateMktDepthL2", imsg$pop(8L), no_names=TRUE)
     },
 
-    NEWS_BULLETINS= function(imsg) {
+    # NEWS_BULLETINS
+    "14"= function(imsg, ver) {
 
       private$validate("updateNewsBulletin", imsg$pop(4L), no_names=TRUE)
     },
 
-    MANAGED_ACCTS= function(imsg) {
+    # MANAGED_ACCTS
+    "15"= function(imsg, ver) {
 
       private$validate("managedAccounts", accountsList=imsg$pop())
     },
 
-    RECEIVE_FA= function(imsg) {
+    # RECEIVE_FA
+    "16"= function(imsg, ver) {
 
       faDataType <- map_int2enum("FaDataType", imsg$pop())
 
       private$validate("receiveFA", faDataType=faDataType, xml=imsg$pop())
     },
 
-    HISTORICAL_DATA= function(imsg) {
+    # HISTORICAL_DATA
+    "17"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
       imsg$pop(2L) # Ignore startDate, endDate
 
-      # Number of rows
-      n <- Validator$i(imsg$pop())
-
-      bar <- matrix(imsg$pop(n * 8L), ncol=8L, byrow=TRUE)
-
-      dimnames(bar) <- list(character(), c("time", "open", "high", "low", "close", "volume", "wap", "count"))
+      bar <- private$to_matrix(imsg, "Bar")
 
       private$validate("historicalData",  reqId=reqId, bar=bar)
     },
 
-    SCANNER_DATA= function(imsg) {
+    # SCANNER_DATA
+    "20"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
@@ -634,49 +665,58 @@ Decoder <- R6Class("Decoder",
                                       legsStr=         legsStr)
     },
 
-    SCANNER_PARAMETERS= function(imsg) {
+    # SCANNER_PARAMETERS
+    "19"= function(imsg, ver) {
 
       private$validate("scannerParameters", xml=imsg$pop())
     },
 
-    CURRENT_TIME= function(imsg) {
+    # CURRENT_TIME
+    "49"= function(imsg, ver) {
 
       private$validate("currentTime", time=imsg$pop())
     },
 
-    REAL_TIME_BARS= function(imsg) {
+    # REAL_TIME_BARS
+    "50"= function(imsg, ver) {
 
       private$validate("realtimeBar", imsg$pop(9L), no_names=TRUE)
     },
 
-    FUNDAMENTAL_DATA= function(imsg) {
+    # FUNDAMENTAL_DATA
+    "51"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
       private$validate("fundamentalData", reqId=reqId, data=imsg$pop())
     },
 
-    CONTRACT_DATA_END= function(imsg) {
+    # CONTRACT_DATA_END
+    "52"= function(imsg, ver) {
 
       private$validate("contractDetailsEnd", reqId=imsg$pop())
     },
 
-    OPEN_ORDER_END= function(imsg) {
+    # OPEN_ORDER_END
+    "53"= function(imsg, ver) {
 
       private$validate("openOrderEnd")
     },
 
-    ACCT_DOWNLOAD_END= function(imsg) {
+    # ACCT_DOWNLOAD_END
+    "54"= function(imsg, ver) {
 
       private$validate("accountDownloadEnd", accountName=imsg$pop())
     },
 
-    EXECUTION_DATA_END= function(imsg) {
+    # EXECUTION_DATA_END
+    "55"= function(imsg, ver) {
 
       private$validate("execDetailsEnd", reqId=imsg$pop())
     },
 
-    DELTA_NEUTRAL_VALIDATION= function(imsg) {
+    # DELTA_NEUTRAL_VALIDATION
+    "56"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
@@ -687,19 +727,22 @@ Decoder <- R6Class("Decoder",
       private$validate("deltaNeutralValidation", reqId=reqId, deltaNeutralContract=deltaNeutralContract)
     },
 
-    TICK_SNAPSHOT_END= function(imsg) {
+    # TICK_SNAPSHOT_END
+    "57"= function(imsg, ver) {
 
       private$validate("tickSnapshotEnd", reqId=imsg$pop())
     },
 
-    MARKET_DATA_TYPE= function(imsg) {
+    # MARKET_DATA_TYPE
+    "58"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
       private$validate("marketDataType", reqId=reqId, marketDataType=imsg$pop())
     },
 
-    COMMISSION_REPORT= function(imsg) {
+    # COMMISSION_REPORT
+    "59"= function(imsg, ver) {
 
       commission <- CommissionReport
 
@@ -708,7 +751,8 @@ Decoder <- R6Class("Decoder",
       private$validate("commissionReport", commissionReport=commission)
     },
 
-    POSITION_DATA= function(imsg) {
+    # POSITION_DATA
+    "61"= function(imsg, ver) {
 
       account <- imsg$pop()
 
@@ -724,61 +768,71 @@ Decoder <- R6Class("Decoder",
                                     avgCost=  avgCost)
     },
 
-    POSITION_END= function(imsg) {
+    # POSITION_END
+    "62"= function(imsg, ver) {
 
       private$validate("positionEnd")
     },
 
-    ACCOUNT_SUMMARY= function(imsg) {
+    # ACCOUNT_SUMMARY
+    "63"= function(imsg, ver) {
 
       private$validate("accountSummary", imsg$pop(5L), no_names=TRUE)
     },
 
-    ACCOUNT_SUMMARY_END= function(imsg) {
+    # ACCOUNT_SUMMARY_END
+    "64"= function(imsg, ver) {
 
       private$validate("accountSummaryEnd", reqId=imsg$pop())
     },
 
-    VERIFY_MESSAGE_API= function(imsg) {
+    # VERIFY_MESSAGE_API
+    "65"= function(imsg, ver) {
 
       private$validate("verifyMessageAPI", apiData=imsg$pop())
     },
 
-    VERIFY_COMPLETED= function(imsg) {
+    # VERIFY_COMPLETED
+    "66"= function(imsg, ver) {
 
       isSuccessful <- imsg$pop()
       private$validate("verifyCompleted", isSuccessful=isSuccessful, errorText=imsg$pop())
     },
 
-    DISPLAY_GROUP_LIST= function(imsg) {
+    # DISPLAY_GROUP_LIST
+    "67"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
       private$validate("displayGroupList", reqId=reqId, groups=imsg$pop())
     },
 
-    DISPLAY_GROUP_UPDATED= function(imsg) {
+    # DISPLAY_GROUP_UPDATED
+    "68"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
       private$validate("displayGroupUpdated", reqId=reqId, contractInfo=imsg$pop())
     },
 
-    VERIFY_AND_AUTH_MESSAGE_API= function(imsg) {
+    # VERIFY_AND_AUTH_MESSAGE_API
+    "69"= function(imsg, ver) {
 
       apiData <- imsg$pop()
 
       private$validate("verifyAndAuthMessageAPI", apiData=apiData, xyzChallenge=imsg$pop())
     },
 
-    VERIFY_AND_AUTH_COMPLETED= function(imsg) {
+    # VERIFY_AND_AUTH_COMPLETED
+    "70"= function(imsg, ver) {
 
       isSuccessful <- imsg$pop()
 
       private$validate("verifyAndAuthCompleted", isSuccessful=isSuccessful, errorText=imsg$pop())
     },
 
-    POSITION_MULTI= function(imsg) {
+    # POSITION_MULTI
+    "71"= function(imsg, ver) {
 
       reqId   <- imsg$pop()
       account <- imsg$pop()
@@ -798,22 +852,26 @@ Decoder <- R6Class("Decoder",
                                         avgCost=   avgCost)
     },
 
-    POSITION_MULTI_END= function(imsg) {
+    # POSITION_MULTI_END
+    "72"= function(imsg, ver) {
 
       private$validate("positionMultiEnd", reqId=imsg$pop())
     },
 
-    ACCOUNT_UPDATE_MULTI= function(imsg) {
+    # ACCOUNT_UPDATE_MULTI
+    "73"= function(imsg, ver) {
 
       private$validate("accountUpdateMulti", imsg$pop(6L), no_names=TRUE)
     },
 
-    ACCOUNT_UPDATE_MULTI_END= function(imsg) {
+    # ACCOUNT_UPDATE_MULTI_END
+    "74"= function(imsg, ver) {
 
       private$validate("accountUpdateMultiEnd", reqId=imsg$pop())
     },
 
-    SECURITY_DEFINITION_OPTION_PARAMETER= function(imsg) {
+    # SECURITY_DEFINITION_OPTION_PARAMETER
+    "75"= function(imsg, ver) {
 
       reqId           <- imsg$pop()
       exchange        <- imsg$pop()
@@ -836,32 +894,32 @@ Decoder <- R6Class("Decoder",
                                                               strikes=         strikes)
     },
 
-    SECURITY_DEFINITION_OPTION_PARAMETER_END= function(imsg) {
+    # SECURITY_DEFINITION_OPTION_PARAMETER_END
+    "76"= function(imsg, ver) {
 
       private$validate("securityDefinitionOptionalParameterEnd", reqId=imsg$pop())
     },
 
-    SOFT_DOLLAR_TIERS= function(imsg) {
+    # SOFT_DOLLAR_TIERS
+    "77"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
-      n <- Validator$i(imsg$pop())
-
-      tiers <- private$to_matrix(imsg, n, "SoftDollarTier")
+      tiers <- private$to_matrix(imsg, "SoftDollarTier")
 
       private$validate("softDollarTiers", reqId=reqId, tiers=tiers)
     },
 
-    FAMILY_CODES= function(imsg) {
+    # FAMILY_CODES
+    "78"= function(imsg, ver) {
 
-      n <- Validator$i(imsg$pop())
-
-      familyCodes <- private$to_matrix(imsg, n, "FamilyCode")
+      familyCodes <- private$to_matrix(imsg, "FamilyCode")
 
       private$validate("familyCodes", familyCodes=familyCodes)
     },
 
-    SYMBOL_SAMPLES= function(imsg) {
+    # SYMBOL_SAMPLES
+    "79"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
@@ -888,77 +946,80 @@ Decoder <- R6Class("Decoder",
       private$validate("symbolSamples", reqId=reqId, contractDescriptions=cds)
     },
 
-    MKT_DEPTH_EXCHANGES= function(imsg) {
+    # MKT_DEPTH_EXCHANGES
+    "80"= function(imsg, ver) {
 
-      n <- Validator$i(imsg$pop())
-
-      dms <- private$to_matrix(imsg, n, "DepthMktDataDescription")
+      dms <- private$to_matrix(imsg, "DepthMktDataDescription")
 
       private$validate("mktDepthExchanges", depthMktDataDescriptions=dms)
     },
 
-    TICK_REQ_PARAMS= function(imsg) {
+    # TICK_REQ_PARAMS
+    "81"= function(imsg, ver) {
 
       private$validate("tickReqParams", imsg$pop(4L), no_names=TRUE)
     },
 
-    SMART_COMPONENTS= function(imsg) {
+    # SMART_COMPONENTS
+    "82"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
-      n <- Validator$i(imsg$pop())
-
-      sm <- private$to_matrix(imsg, n, "SmartComponent")
+      sm <- private$to_matrix(imsg, "SmartComponent")
 
       private$validate("smartComponents", reqId=reqId, theMap=sm)
     },
 
-    NEWS_ARTICLE= function(imsg) {
+    # NEWS_ARTICLE
+    "83"= function(imsg, ver) {
 
       private$validate("newsArticle", imsg$pop(3L), no_names=TRUE)
     },
 
-    TICK_NEWS= function(imsg) {
+    # TICK_NEWS
+    "84"= function(imsg, ver) {
 
       private$validate("tickNews", imsg$pop(6L), no_names=TRUE)
     },
 
-    NEWS_PROVIDERS= function(imsg) {
+    # NEWS_PROVIDERS
+    "85"= function(imsg, ver) {
 
-      n <- Validator$i(imsg$pop())
-
-      newsProviders <- private$to_matrix(imsg, n, "NewsProvider")
+      newsProviders <- private$to_matrix(imsg, "NewsProvider")
 
       private$validate("newsProviders", newsProviders=newsProviders)
     },
 
-    HISTORICAL_NEWS= function(imsg) {
+    # HISTORICAL_NEWS
+    "86"= function(imsg, ver) {
 
       private$validate("historicalNews", imsg$pop(5L), no_names=TRUE)
     },
 
-    HISTORICAL_NEWS_END= function(imsg) {
+    # HISTORICAL_NEWS_END
+    "87"= function(imsg, ver) {
 
       private$validate("historicalNewsEnd", imsg$pop(2L), no_names=TRUE)
     },
 
-    HEAD_TIMESTAMP= function(imsg) {
+    # HEAD_TIMESTAMP
+    "88"= function(imsg, ver) {
 
       private$validate("headTimestamp", imsg$pop(2L), no_names=TRUE)
     },
 
-    HISTOGRAM_DATA= function(imsg) {
+    # HISTOGRAM_DATA
+    "89"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
-      n <- Validator$i(imsg$pop())
-
-      d <- private$to_matrix(imsg, n, "HistogramData")
+      d <- private$to_matrix(imsg, "HistogramData")
 
       private$validate("histogramData", reqId=reqId, data=d)
     },
 
-    HISTORICAL_DATA_UPDATE= function(imsg) {
+    # HISTORICAL_DATA_UPDATE
+    "90"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
@@ -968,80 +1029,78 @@ Decoder <- R6Class("Decoder",
       private$validate("historicalDataUpdate", reqId=reqId, bar=bar[c(2L, 3L, 5L, 6L, 4L, 8L, 7L, 1L)])
     },
 
-    REROUTE_MKT_DATA_REQ= function(imsg) {
+    # REROUTE_MKT_DATA_REQ
+    "91"= function(imsg, ver) {
 
        private$validate("rerouteMktDataReq", imsg$pop(3L), no_names=TRUE)
     },
 
-    REROUTE_MKT_DEPTH_REQ= function(imsg) {
+    # REROUTE_MKT_DEPTH_REQ
+    "92"= function(imsg, ver) {
 
       private$validate("rerouteMktDepthReq", imsg$pop(3L), no_names=TRUE)
     },
 
-    MARKET_RULE= function(imsg) {
+    # MARKET_RULE
+    "93"= function(imsg, ver) {
 
       marketRuleId <- imsg$pop()
 
-      n <- Validator$i(imsg$pop())
-
-      p <- private$to_matrix(imsg, n, "PriceIncrement")
+      p <- private$to_matrix(imsg, "PriceIncrement")
 
       private$validate("marketRule", marketRuleId=marketRuleId, priceIncrements=p)
     },
 
-    PNL= function(imsg) {
+    # PNL
+    "94"= function(imsg, ver) {
 
       private$validate("pnl", imsg$pop(4L), no_names=TRUE)
     },
 
-    PNL_SINGLE= function(imsg) {
+    # PNL_SINGLE
+    "95"= function(imsg, ver) {
 
       private$validate("pnlSingle", imsg$pop(6L), no_names=TRUE)
     },
 
-    HISTORICAL_TICKS= function(imsg) {
+    # HISTORICAL_TICKS
+    "96"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
-      n <- Validator$i(imsg$pop())
-
-      ticks <- matrix(imsg$pop(n * 4L),
-                      ncol=     4L,
-                      byrow=    TRUE,
-                      dimnames= list(character(), c("time", "", "price", "size")))[ , -2L]
+      ticks <- private$to_matrix(imsg, names=c("time", "", "price", "size"))[ , -2L]
 
       done <- imsg$pop()
 
       private$validate("historicalTicks", reqId=reqId, ticks=ticks, done=done)
     },
 
-    HISTORICAL_TICKS_BID_ASK= function(imsg) {
+    # HISTORICAL_TICKS_BID_ASK
+    "97"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
-      n <- Validator$i(imsg$pop())
-
-      ticks <- private$to_matrix(imsg, n, "HistoricalTickBidAsk")
+      ticks <- private$to_matrix(imsg, "HistoricalTickBidAsk")
 
       done <- imsg$pop()
 
       private$validate("historicalTicksBidAsk", reqId=reqId, ticks=ticks, done=done)
     },
 
-    HISTORICAL_TICKS_LAST= function(imsg) {
+    # HISTORICAL_TICKS_LAST
+    "98"= function(imsg, ver) {
 
       reqId <- imsg$pop()
 
-      n <- Validator$i(imsg$pop())
-
-      ticks <- private$to_matrix(imsg, n, "HistoricalTickLast")
+      ticks <- private$to_matrix(imsg, "HistoricalTickLast")
 
       done <- imsg$pop()
 
       private$validate("historicalTicksLast", reqId=reqId, ticks=ticks, done=done)
     },
 
-    TICK_BY_TICK= function(imsg) {
+    # TICK_BY_TICK
+    "99"= function(imsg, ver) {
 
       reqId    <- imsg$pop()
       tickType <- imsg$pop()
@@ -1089,12 +1148,14 @@ Decoder <- R6Class("Decoder",
       }
     },
 
-    ORDER_BOUND= function(imsg) {
+    # ORDER_BOUND
+    "100"= function(imsg, ver) {
 
       private$validate("orderBound", imsg$pop(3L), no_names=TRUE)
     },
 
-    COMPLETED_ORDER= function(imsg) {
+    # COMPLETED_ORDER
+    "101"= function(imsg, ver) {
 
       contract   <- Contract
       order      <- Order
@@ -1120,7 +1181,7 @@ Decoder <- R6Class("Decoder",
               "faMethod",
               "faPercentage")] <- imsg$pop(9L)
 
-      if(private$serverVersion < MIN_SERVER_VER_FA_PROFILE_DESUPPORT)
+      if(ver < MIN_SERVER_VER_FA_PROFILE_DESUPPORT)
         imsg$pop() # Deprecated faProfile
 
       order[c("modelCode",
@@ -1155,20 +1216,7 @@ Decoder <- R6Class("Decoder",
       contract$comboLegsDescrip <- imsg$pop()
 
       # ComboLegs
-      comboLegsCount <- Validator$i(imsg$pop())
-
-      if(comboLegsCount > 0L) {
-
-        contract$comboLegs <- lapply(seq_len(comboLegsCount),
-                                     function(i) {
-
-                                        combo <- ComboLeg
-
-                                        combo[1L:8L] <- imsg$pop(8L)
-
-                                        combo
-                                      })
-      }
+      contract$comboLegs <- private$to_list(imsg, "ComboLeg")
 
       # OrderComboLeg
       orderComboLegsCount <- Validator$i(imsg$pop())
@@ -1237,15 +1285,16 @@ Decoder <- R6Class("Decoder",
 
       if(conditionsSize > 0L) {
 
-        for(i in seq_len(conditionsSize)) {
+        order$conditions <- lapply(seq_len(conditionsSize),
+                                   function(i) {
 
-          condition <- fCondition(map_int2enum("Condition",
-                                                Validator$i(imsg$pop())))
+                                     cond <- fCondition(map_int2enum("Condition",
+                                                                     Validator$i(imsg$pop())))
 
-          condition[-1L] <- imsg$pop(length(condition) - 1L)
+                                     cond[-1L] <- imsg$pop(length(cond) - 1L)
 
-          order$conditions[[i]] <- condition
-        }
+                                     cond
+                                   })
 
         order[c("conditionsIgnoreRth",
                 "conditionsCancelOrder")] <- imsg$pop(2L)
@@ -1268,10 +1317,10 @@ Decoder <- R6Class("Decoder",
               "midOffsetAtWhole",
               "midOffsetAtHalf")] <- imsg$pop(5L)
 
-      if(private$serverVersion >= MIN_SERVER_VER_CUSTOMER_ACCOUNT)
+      if(ver >= MIN_SERVER_VER_CUSTOMER_ACCOUNT)
         order$customerAccount <- imsg$pop()
 
-      if(private$serverVersion >= MIN_SERVER_VER_PROFESSIONAL_CUSTOMER)
+      if(ver >= MIN_SERVER_VER_PROFESSIONAL_CUSTOMER)
         order$professionalCustomer <- imsg$pop()
 
       private$validate("completedOrder", contract=   contract,
@@ -1279,36 +1328,39 @@ Decoder <- R6Class("Decoder",
                                          orderState= orderState)
     },
 
-    COMPLETED_ORDERS_END= function(imsg) {
+    # COMPLETED_ORDERS_END
+    "102"= function(imsg, ver) {
 
       private$validate("completedOrdersEnd")
     },
 
-    REPLACE_FA_END= function(imsg) {
+    # REPLACE_FA_END
+    "103"= function(imsg, ver) {
 
       private$validate("replaceFAEnd", imsg$pop(2L), no_names=TRUE)
     },
 
-    WSH_META_DATA= function(imsg) {
+    # WSH_META_DATA
+    "104"= function(imsg, ver) {
 
       private$validate("wshMetaData", imsg$pop(2L), no_names=TRUE)
     },
 
-    WSH_EVENT_DATA= function(imsg) {
+    # WSH_EVENT_DATA
+    "105"= function(imsg, ver) {
 
       private$validate("wshEventData", imsg$pop(2L), no_names=TRUE)
     },
 
-    HISTORICAL_SCHEDULE= function(imsg) {
+    # HISTORICAL_SCHEDULE
+    "106"= function(imsg, ver) {
 
       reqId         <- imsg$pop()
       startDateTime <- imsg$pop()
       endDateTime   <- imsg$pop()
       timeZone      <- imsg$pop()
 
-      n <- Validator$i(imsg$pop())
-
-      sessions <- private$to_matrix(imsg, n, "HistoricalSession")
+      sessions <- private$to_matrix(imsg, "HistoricalSession")
 
       private$validate("historicalSchedule", reqId=         reqId,
                                              startDateTime= startDateTime,
@@ -1317,7 +1369,8 @@ Decoder <- R6Class("Decoder",
                                              sessions=      sessions)
     },
 
-    USER_INFO= function(imsg) {
+    # USER_INFO
+    "107"= function(imsg, ver) {
 
       private$validate("userInfo", imsg$pop(2L), no_names=TRUE)
     }
