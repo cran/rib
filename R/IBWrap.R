@@ -47,7 +47,7 @@ IBWrap <- R6Class("IBWrap",
 
     execDetailsEnd= function(reqId) warning("default implementation"),
 
-    error= function(id, errorCode, errorString, advancedOrderRejectJson) warning("default implementation"),
+    error= function(id, errorTime, errorCode, errorString, advancedOrderRejectJson) warning("default implementation"),
 
     updateMktDepth= function(id, position, operation, side, price, size) warning("default implementation"),
 
@@ -177,6 +177,10 @@ IBWrap <- R6Class("IBWrap",
 
     historicalSchedule= function(reqId, startDateTime, endDateTime, timeZone, sessions) warning("default implementation"),
 
-    userInfo= function(reqId, whiteBrandingId) warning("default implementation")
+    userInfo= function(reqId, whiteBrandingId) warning("default implementation"),
+
+    historicalDataEnd= function(reqId, startDateStr, endDateStr) warning("default implementation"),
+
+    currentTimeInMillis= function(timeInMillis) warning("default implementation")
   )
 )

@@ -1,6 +1,6 @@
 Package: rib
 Title: An Implementation of 'Interactive Brokers' API
-Version: 0.23.1
+Version: 0.25.3
 Authors@R: person("Luca", "Billi", email = "noreply.section+dev@gmail.com", role = c("aut", "cre"))
 Description: Allows interaction with 'Interactive Brokers' 'Trader Workstation'
     <https://interactivebrokers.github.io/tws-api/>.
@@ -14,8 +14,8 @@ Encoding: UTF-8
 URL: https://github.com/lbilli/rib
 BugReports: https://github.com/lbilli/rib/issues
 NeedsCompilation: no
-Packaged: 2024-10-17 11:28:16 UTC; luca
+Packaged: 2025-02-10 19:37:38 UTC; luca
 Author: Luca Billi [aut, cre]
 Maintainer: Luca Billi <noreply.section+dev@gmail.com>
 Repository: CRAN
-Date/Publication: 2024-10-17 11:50:06 UTC
+Date/Publication: 2025-02-10 20:00:01 UTC
