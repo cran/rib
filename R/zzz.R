@@ -1,15 +1,7 @@
 .onLoad <- function(libname, pkgname) {
 
-  load_data <- function(file)
-                 utils::read.table(file= system.file("data-raw", file, package=pkgname),
-                                   header= TRUE,
-                                   colClasses= "character")
+  # ProtoBuf
+  RProtoBuf::readProtoFiles2(protoPath=system.file("proto", package=pkgname, lib.loc=libname))
 
-  ns <- environment(sys.function())
-
-  assign("signature_wrap", load_data("codes_signature.txt"), ns, inherits=FALSE)
-
-  assign("signature_struct", load_data("codes_struct.txt"), ns, inherits=FALSE)
-
-  assign("Validator", generate_validator(), ns, inherits=FALSE)
+  options("RProtoBuf.int64AsString" = TRUE)
 }
